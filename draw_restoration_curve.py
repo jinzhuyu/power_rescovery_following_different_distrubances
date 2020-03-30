@@ -14,15 +14,15 @@ import matplotlib.dates as mdates
 from matplotlib.dates import (
         YEARLY, DateFormatter, rrulewrapper, RRuleLocator, drange)
 from matplotlib import cm # rainbow color scheme
-
 from datetime import datetime, timedelta
 import time
-
+import copy
+#import dask.dataframe
 import tkinter as tk
 from tkinter import *
-
 import os
-os.chdir('C:\GitHub\Power grid resilience')
+os.chdir('C:\GitHub\Power_grid_resilience')
+
 
 
 # select power outage data using state and county
@@ -98,18 +98,15 @@ def select_county_data(outage_data_df, county, state, start_time, end_time):
             # add outage causes to be filled later
             out_count_comb_df['n_utility'] = n_util
             out_count_comb_df['event_type'] = ''
-            print('# of utility: {}'.format(n_util))
+#            print('# of utility: {}'.format(n_util))
             return out_count_comb_df
 
 
-# add outages of each utility if there are more than one
+# add outage count of each utility to the plot if there are more than one
 def plot_all_util(county_outage_data, state, county, popul, event_start_time,
                   index_time, time_temp_datetime, fig_num):
-    win_len = 5 # moveing average window
-    x_loc = 0.61
-    y_loc = 0.03
-    font_text = 12  
-    save_fig_title = 'Restoration plots/{}_{}_{}.png'.format(state, county, event_start_time[0:10])        
+    
+    save_fig_title = 'Restoration plots/GUI_plots/{}_{}_{}.png'.format(state, county, event_start_time[0:10])        
     if 'n_utility' in county_outage_data.columns:
         n_utility = county_outage_data['n_utility'].iloc[0]
         utility_name = ['All combined']
@@ -154,30 +151,78 @@ def plot_label(fig_num):
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%m/%d/%Y \n %H:%M'))
     plt.gcf().autofmt_xdate()
     
-    plt.yticks(fontsize=12, fontname='Times New Roman', fontweight='bold')
-    plt.xticks(fontsize=12, fontname='Times New Roman', fontweight='bold')
-    
-    
-def plot_all_county(outage_data_df, county_list, state, select_start_time, select_end_time=None, plot_all = 1):
+    plt.yticks(fontsize=font_text, fontname='Times New Roman', fontweight='bold')
+    plt.xticks(fontsize=font_text, fontname='Times New Roman', fontweight='bold')
+
+
+
+def find_county_affected(outage_data_df, state, select_start_time, select_end_time):
+    # case: no counties are input under a state        
+
+    county_affected = []
+    county_all_list = county_coor_fips_df.loc[county_coor_fips_df['state']==state, 'county'].tolist()          
+    for ii in np.arange(len(county_all_list)):
+        county = county_all_list[ii].strip()
+        county_outage_data = select_county_data(
+                    outage_data_df, county, state, start_time=select_start_time, end_time=select_end_time)                 
+        # get time data
+        index_time = range(len(county_outage_data['run_start_time']))
+        
+        # calculate restoration rate
+        fips_code =  county_outage_data['fips_code'].unique()[0]
+        popul = int(county_popul_df.loc[county_popul_df['fips_code']==fips_code, 'population'].iloc[0])
+        outage_count_comb = county_outage_data['outage_count'].iloc[index_time]                   
+        outage_count_comb_arr = outage_count_comb.to_numpy(dtype = 'float32')
+        restore_rate_comb = (popul-outage_count_comb_arr)/popul
+        
+        if (0 < np.min(restore_rate_comb) <= 0.95) & (np.max(outage_count_comb_arr) >= 1000):
+            county_affected.append(county)
+                
+    return(county_affected)
+   
+ 
+def plot_all_county(outage_data_df, loc_dict, select_start_time, select_end_time=None, plot_all = 1):
       
     if select_end_time==None:
         select_end_time = pd.to_datetime(select_start_time) + timedelta(days=45)
         select_end_time = select_end_time.strftime("%Y-%m-%d %H:%M:%S")      
-
-    win_len = 5 # moveing average window
-    x_loc = 0.65
-    y_loc = 0.03
-    font_text = 12  
-       
     
-    if len(county_list)>=2:
+    state_list = list(loc_dict.keys())
+    
+    # to be used in legend
+    loc_dict_copy = copy.deepcopy(loc_dict)
+    county_list_for_legend = []
+    for jj in np.arange(len(state_list)):
+        state_temp = state_list[jj]
+        county_list = loc_dict_copy[state_temp]
+        if not county_list[0]:
+            county_list = find_county_affected(outage_data_df, state_temp, select_start_time, select_end_time)
+            loc_dict_copy[state_temp] = county_list
+        n_county = len(loc_dict_copy[state_temp])
+        county_list_with_state = [None]*n_county
+        for ii in np.arange(n_county):
+            county_list_with_state[ii] = county_list[ii] + ', ' + state_temp       
+        county_list_for_legend = county_list_for_legend + county_list_with_state            
+    county_arr_for_legend = np.asarray(county_list_for_legend)
+    
+    
+    counter = 0
+    y_lim_LB = 1
+    for i_state in np.arange(len(state_list)):
+        print(i_state)
+        state = state_list[i_state]
+        print(state)
+        county_list = loc_dict_copy[state_list[i_state]]
+               
+          
+#        if len(county_list)>=2:            
         
-        y_lim_LB = 1
-    
         for ii in np.arange(len(county_list)):
             
             # extract data for each county
             county = county_list[ii].strip()
+#                print('county: ', county)
+#                print('state: ', state)
             county_outage_data = select_county_data(
                     outage_data_df, county, state, start_time=select_start_time, end_time=select_end_time)     
             
@@ -204,7 +249,7 @@ def plot_all_county(outage_data_df, county_list, state, select_start_time, selec
                         popul, np.max(outage_count_comb_arr)))
                 print('{}, {}'.format(county, state))
                 print('Fips code: {}'.format(fips_code))
-                time.sleep(5)
+                time.sleep(1)
                 
             elif plot_all == 1:
                 
@@ -215,8 +260,9 @@ def plot_all_county(outage_data_df, county_list, state, select_start_time, selec
                 fig_num = 0
                 fig = plt.figure(fig_num, figsize=(10, 8))                         
                 plt.plot(time_temp_datetime, restore_rate_comb_ave)
+                counter = counter + 1
 #                plot_label(fig_num)
-#                plt.show()
+
             
             elif plot_all == 0:
                 # restoration plot on an individual figure
@@ -232,96 +278,144 @@ def plot_all_county(outage_data_df, county_list, state, select_start_time, selec
                               index_time, time_temp_datetime, fig_num = ii)
                 plt.show()
                 
-        if plot_all == 1:
-            fig_num = 0
-            plt.figure(fig_num)
-            county_arr = np.asarray(county_list)
-            plt.legend(county_arr, bbox_to_anchor=(x_loc-0.02, y_loc+0.08), frameon=False,
-                       loc="lower left", fontsize=font_text, fancybox=True, framealpha=0.5)
-            ax = plt.axes()
-            plt.text(x_loc,y_loc+0.06,'State: {}'.format(state),
-                 fontsize=font_text, color='black', fontweight='bold', transform=ax.transAxes)                 
-            plt.ylim(bottom=y_lim_LB-0.0005)
-            plot_label(fig_num)
-            plt.show()
+    if plot_all == 1:
+        fig_num = 0
+        plt.figure(fig_num)
+        ax = plt.axes()
+        if len(county_arr_for_legend)<=12:
+            plt.legend(county_arr_for_legend, bbox_to_anchor=(x_loc-0.02, y_loc+0.03),
+                       frameon=False, loc="lower left", fontsize=font_text,
+                       borderaxespad=0, fancybox=True, framealpha=0.5)
+        elif 13<len(county_arr_for_legend)<=30:
+            n_col = 6
+            ax.legend(county_arr_for_legend, bbox_to_anchor=(0, 1.0), ncol = n_col, frameon=False,
+                      loc="lower left", fontsize=font_text-5, fancybox=True, framealpha=0.5)                    
+#            else:
+#                plt.text(x_loc,y_loc+0.07,'',
+#                     fontsize=font_text, color='black', fontweight='bold', transform=ax.transAxes)                
+#            
+#                plt.text(x_loc,y_loc+0.06,'State: {}'.format(state),
+#                     fontsize=font_text, color='black', fontweight='bold', transform=ax.transAxes)                 
+        plt.ylim(bottom=y_lim_LB-0.0005)
+        plot_label(fig_num)
         
-    elif len(county_list) == 1: 
-        
-        # extract data for each county
-        county = county_list[0].strip()
-        county_outage_data = select_county_data(
-                outage_data_df, county, state, start_time=select_start_time, end_time=select_end_time)     
-        
-        # get time data
-        index_time = range(len(county_outage_data['run_start_time']))
-        time_temp = county_outage_data['run_start_time'].iloc[index_time]
-        date_datetime = [datetime.strptime(d_stamp,"%Y-%m-%d %H:%M:%S") for d_stamp in time_temp]
-        time_temp_datetime = pd.to_datetime(np.asarray(time_temp))
-        
-        # calculate restoration rate
-        fips_code =  county_outage_data['fips_code'].unique()[0]
-        popul = int(county_popul_df.loc[county_popul_df['fips_code']==fips_code, 'population'].iloc[0])
-        
-        # combine outage
-        outage_count_comb = county_outage_data['outage_count'].iloc[index_time]                   
-        outage_count_comb_arr = outage_count_comb.to_numpy(dtype = 'float32')
-        restore_rate_comb = (popul-outage_count_comb_arr)/popul
-        restore_rate_comb_ave = pd.Series(restore_rate_comb).rolling(window=win_len).mean()
-        restore_rate_comb_ave[0:(win_len-1)] = restore_rate_comb[0:(win_len-1)]  
-        
-        if np.min(restore_rate_comb)<=0:
-            
-            print('Error: population, {}, < max outage count, {}'.format(popul, np.min(outage_count_comb_arr)))
-            print('{}, {}'.format(county, state))
-            print('Fips code: {}'.format(fips_code))
-            time.sleep(5)
-            
-        else:
-            fig_num = 0
-            fig = plt.figure(fig_num, figsize=(10, 8))    
-            
-            
-            plt.plot(time_temp_datetime, restore_rate_comb_ave)
-            plot_label(fig_num)
+        # plots of counties in different states on the same figure
+#        if i_state == (len(state_list)-1):
+        save_fig_title = 'Restoration plots/GUI_plots/multi_state_{}_{}.png'.format(state, select_start_time[0:10]) 
+        plt.savefig(save_fig_title, dpi=600)
+        plt.show()
+          
+#        elif len(county_list) == 1 & (plot_all==0): 
+#            
+#            # extract data for the county
+#            county = county_list[0].strip()
+#            county_outage_data = select_county_data(
+#                    outage_data_df, county, state, start_time=select_start_time, end_time=select_end_time)     
+#            
+#            # get time data
+#            index_time = range(len(county_outage_data['run_start_time']))
+#            time_temp = county_outage_data['run_start_time'].iloc[index_time]
+#    #        date_datetime = [datetime.strptime(d_stamp,"%Y-%m-%d %H:%M:%S") for d_stamp in time_temp]
+#            time_temp_datetime = pd.to_datetime(np.asarray(time_temp))
+#            
+#            # calculate restoration rate
+#            fips_code =  county_outage_data['fips_code'].unique()[0]
+#            popul = int(county_popul_df.loc[county_popul_df['fips_code']==fips_code, 'population'].iloc[0])
+#            
+#            # combine outage
+#            outage_count_comb = county_outage_data['outage_count'].iloc[index_time]                   
+#            outage_count_comb_arr = outage_count_comb.to_numpy(dtype = 'float32')
+#            restore_rate_comb = (popul-outage_count_comb_arr)/popul
+#            restore_rate_comb_ave = pd.Series(restore_rate_comb).rolling(window=win_len).mean()
+#            restore_rate_comb_ave[0:(win_len-1)] = restore_rate_comb[0:(win_len-1)]  
+#            
+#            if np.min(restore_rate_comb) <= 0:
+#                
+#                print('Error: population, {}, < max outage count, {}'.format(popul, np.min(outage_count_comb_arr)))
+#                print('{}, {}'.format(county, state))
+#                print('Fips code: {}'.format(fips_code))
+#                time.sleep(5)
+#                
+#            else:
+#                fig_num = 0
+#                fig = plt.figure(fig_num, figsize=(10, 8))    
+#                
+#                
+#                plt.plot(time_temp_datetime, restore_rate_comb_ave)
+#                plot_label(fig_num)
+#    
+#                ax = plt.axes()
+#                plt.text(x_loc,y_loc+0.07,'County: {}, {}'.format(county, state),
+#                         fontsize=font_text, color='black', fontweight='bold', transform=ax.transAxes)
+#                            
+#                # add outages of each utility if there are more than one
+#                plt.figure(fig_num)
+#                plot_all_util(county_outage_data, state, county, popul,
+#                              select_start_time, index_time, time_temp_datetime, fig_num)
+#                plt.show()
 
-            ax = plt.axes()
-            plt.text(x_loc,y_loc+0.07,'County: {}, {}'.format(county, state),
-                     fontsize=font_text, color='black', fontweight='bold', transform=ax.transAxes)
-                        
-            # add outages of each utility if there are more than one
-            plt.figure(fig_num)
-            plot_all_util(county_outage_data, state, county, popul,
-                          select_start_time, index_time, time_temp_datetime, fig_num)
-            plt.show()
+loc_str = 'Florida: ; Georgia: Camden, Charlton;'
+#loc_dict = extract_county_state(loc_str)
+
+def extract_county_state(loc_str):
+    # replace '.' with ';'
+    loc_str = loc_str.replace('.',';')
+    loc_str_split = re.split(';', loc_str)
+    # remove empty string element in case the string ends with a ";"
+    while("" in loc_str_split): 
+        loc_str_split.remove("") 
+    n_state = len(loc_str_split) 
+    loc_dict={}
+    for ii in np.arange(n_state):
+        loc_str_sub = re.split(':', loc_str_split[ii])
+        state_temp = loc_str_sub[0].strip()    
+        # remove the "." following the last county
+        county_list_temp = loc_str_sub[1:]
+#        if ii==(n_state-1):
+#            county_list_temp[-1] = county_list_temp[-1].replace('.','')
+        # list to string
+        county_str_temp = ' '.join(map(str,  county_list_temp))
+        county_list_split = county_str_temp.split(',')
+        county_list_split = [x.strip() for x in county_list_split]
+        loc_dict[state_temp] = county_list_split
+    return loc_dict
 
 
 # function to be executed when the button is clicked           
 def draw_each_cnty():
-    county_list = txt_cnty.get().split(",")
-    print(county_list)
-    state = txt_state.get()
+#    county_list = txt_cnty.get().split(",")
+#    print(county_list)
+#    state = txt_loc.get()
+    loc_str = txt_loc.get()
+    loc_dict = extract_county_state(loc_str)
     select_start_time = txt_start_date.get()  
     select_end_time = txt_end_date.get() 
-    plot_all_county(outage_data_sample_df, county_list, state, select_start_time, select_end_time, plot_all = 0)
+    plot_all_county(outage_data_sample_df, loc_dict, select_start_time, select_end_time, plot_all = 0)
 
-
+#loc_str = 'Florida: Seminole, Palm Beach; Georgia: Charlton, Camden'
+#loc_dict = extract_county_state(loc_str)
+    
     
 def draw_all_cnty():
-    county_list = txt_cnty.get().split(",")
-    print(county_list)
-    state = txt_state.get()
+#    county_list = txt_cnty.get().split(",")
+#    print(county_list)
+#    state = txt_loc.get()
+    loc_str = txt_loc.get()
+    loc_dict = extract_county_state(loc_str)
     select_start_time = txt_start_date.get()  
     select_end_time = txt_end_date.get() 
-    plot_all_county(outage_data_sample_df, county_list, state, select_start_time, select_end_time, plot_all = 1)
-
-
-
+    plot_all_county(outage_data_sample_df, loc_dict, select_start_time, select_end_time, plot_all = 1)
 
 
 # import data
 # set direc
 # import os
 # os.chdir('C:\GitHub\Power grid resilience')
+    
+
+    
+# county list in a state and fips code
+county_coor_fips_df = pd.read_csv('county fips and coordinates.csv')
 
 # population
 county_popul_df = pd.read_csv('county_population.csv', header=0)
@@ -333,20 +427,27 @@ county_popul_df = county_popul_df.dropna()
 # outage_data_all_df = pd.read_csv('outage_summary.csv', header=None, names=outage_attr)
 # out_data_sample = outage_data_all_df[
 #         (outage_data_all_df['run_start_time']>='2017-09-05') & (outage_data_all_df['run_start_time']<='2017-10-15') &
-#         (outage_data_all_df['state']=='Florida')]
-# out_data_sample.to_csv (r'C:\GitHub\Power grid resilience\out_data_sample.csv', index = False, header=True)
+#         ((outage_data_all_df['state']=='Florida') | (outage_data_all_df['state']=='Georgia'))]
+# out_data_sample.to_csv (r'C:\GitHub\Power_grid_resilience\out_data_sample.csv', index = False, header=True)
 
 outage_data_sample_df = pd.read_csv('out_data_sample.csv', header=0)
 
+
+# define parameters for plot and calculation
+
+win_len = 5 # moveing average window
+x_loc = 0.65
+y_loc = 0.02
+font_text = 12  
 
 
 # layout design
 
 root = tk.Tk()
-root.geometry('460x180')
+root.geometry('600x160')
 root.title("Power restoration plots")
 
-wth_txt = 42
+wth_txt = 65
 id_row = 1
 pad_x = 8
 
@@ -355,42 +456,41 @@ lbl.grid(column=0, row=0)
 
 # location and date
 
-lbl = tk.Label(root, text="State")
+lbl = tk.Label(root, text="State and county")
 lbl.grid(column=0, row=id_row, sticky=(W), padx=(pad_x,0))
-state_str=StringVar(value='Florida')
-txt_state = Entry(root, width=wth_txt, textvariable=state_str)
-txt_state.grid(column=1, row=id_row, sticky=(W), padx=(pad_x,0))
+loc_str = StringVar(value='Florida; Georgia: Camden, Charlton.')
+txt_loc = Entry(root, width=wth_txt, textvariable=loc_str)
+txt_loc.grid(column=1, row=id_row, sticky=(W), padx=(pad_x,0))
 
-lbl = tk.Label(root, text="County/Counties")
-lbl.grid(column=0, row=id_row+1, sticky=(W), padx=(pad_x,0), pady=(0,15))
-cnty_str=StringVar(value="Seminole, Palm Beach")
-txt_cnty = Entry(root, width=wth_txt, textvariable=cnty_str)
-txt_cnty.grid(column=1, row=id_row+1, sticky=(W), padx=(pad_x,0), pady=(0,15))
+#lbl = tk.Label(root, text="County/Counties")
+#lbl.grid(column=0, row=id_row+1, sticky=(W), padx=(pad_x,0), pady=(0,15))
+#cnty_str=StringVar(value="Seminole, Palm Beach")
+#txt_cnty = Entry(root, width=wth_txt, textvariable=cnty_str)
+#txt_cnty.grid(column=1, row=id_row+1, sticky=(W), padx=(pad_x,0), pady=(0,15))
 
 lbl = tk.Label(root, text="Start date and time")
-lbl.grid(column=0, row=id_row+2, sticky=(W), padx=(pad_x,0))
-start_date_str=StringVar(value='2017-09-08 22:00:00 ')
+lbl.grid(column=0, row=id_row+1, sticky=(W), padx=(pad_x,0))
+start_date_str = StringVar(value='2017-09-08 22:00:00 ')
 txt_start_date = Entry(root, width=wth_txt, textvariable=start_date_str)
-txt_start_date.grid(column=1, row=id_row+2, sticky=(W), padx=(pad_x,0))
+txt_start_date.grid(column=1, row=id_row+1, sticky=(W), padx=(pad_x,0))
 
 lbl = tk.Label(root, text="End date and time")
-lbl.grid(column=0, row=id_row+3, sticky=(W), padx=(pad_x,0), pady=(0,15))
-end_date_str=StringVar(value='2017-09-25 20:00:00')
+lbl.grid(column=0, row=id_row+2, sticky=(W), padx=(pad_x,0), pady=(0,15))
+end_date_str = StringVar(value='2017-09-25 20:00:00')
 txt_end_date = Entry(root, width=wth_txt, textvariable=end_date_str)
-txt_end_date.grid(column=1, row=id_row+3, sticky=(W), padx=(pad_x,0), pady=(0,15))
+txt_end_date.grid(column=1, row=id_row+2, sticky=(W), padx=(pad_x,0), pady=(0,15))
 
 
-#county_list = ['Seminole ', '  Palm Beach ']
-#state = 'Florida'
+#loc_str = 'Florida; Georgia: Camden, Charlton.'
 #select_start_time = '2017-09-09'
-#select_end_time = '2017-09-24'
+#select_end_time = '2017-09-26'
     
 # options for plots with clicks and exit with click
 btn_each_cnty = Button(root, text="  Draw a plot for each county  ", command=draw_each_cnty)
-btn_each_cnty.grid(column=0, row=id_row+6, sticky=(W), padx=(pad_x,0), pady=(0,15))
+btn_each_cnty.grid(column=0, row=id_row+5, sticky=(W), padx=(pad_x,0), pady=(0,15))
 
 frm = Frame(root)
-frm.grid(column=1, row=id_row+6, sticky=(W), padx=(pad_x,0), pady=(0,15))
+frm.grid(column=1, row=id_row+5, sticky=(W), padx=(pad_x,0), pady=(0,15))
 btn_all_cnty = Button(frm, text="  Draw a plot for all counties  ", command=draw_all_cnty)
 btn_all_cnty.grid(column=0, row=0, sticky=(W), padx=(2,0), pady=(0,0))
 
@@ -400,3 +500,71 @@ btn_exit.grid(column=1, row=0, sticky=(W), padx=(12,0), pady=(0,0))
 
 
 root.mainloop()
+
+
+
+
+# draw figure
+
+# https://datatofish.com/matplotlib-charts-tkinter-gui/
+# https://pythonprogramming.net/embedding-live-matplotlib-graph-tkinter-gui/
+
+#from tkinter import*
+#import tkinter as tk
+#
+#
+#class Packbox(tk.Frame):
+#    def __init__(self, root):
+#        tk.Frame.__init__(self, root)
+#
+#        bottomframe = Frame(root)
+#        bottomframe.pack( side = BOTTOM )
+#
+#        # Initialize buttons redbutton, whitebutton and bluebutton
+#        whitebutton = Button(self, text="Red", fg="red", command=self.white_button)
+#        whitebutton.pack( side = LEFT)
+#
+#        redbutton = Button(self, text="white", fg="white",  command=self.red_button)
+#        redbutton.pack( side = LEFT )
+#
+#        self.white_button()
+#        self.red_button()
+#
+#
+#        # Define each buttons method, for example,  white_button() is whitebutton's method, which
+#        # is called by command=self.white_button
+#
+#    def white_button(self):
+#
+#        self.top = tk.Toplevel(self)
+#
+#        # Creates new button that closes the new root that is opened when one of the color buttons
+#        # are pressed. 
+#        button = tk.Button(self.top, text="Close window", command=self.top.destroy)
+#
+#        # prints the text in the new window that's opened with the whitebutton is pressed
+#        label = tk.Label(self.top, wraplength=200, text="This prints white button txt")
+#
+#
+#        label.pack(fill="x")
+#        button.pack()
+#
+#    def red_button(self):
+#
+#        self.top = tk.Toplevel(self)
+#        button = tk.Button(self.top, text="Close window", command=self.top.destroy)
+#
+#        label = tk.Label(self.top, wraplength=200, text="This prints red button txt")
+#
+#        label.pack(fill="x")
+#        button.pack()
+#
+#
+#
+#if __name__ == "__main__":
+#    root = tk.Tk()
+#    Packbox(root).pack(side="top", fill="both", expand=True)
+#    root.mainloop()
+
+
+#https://www.python-course.eu/tkinter_entry_widgets.php
