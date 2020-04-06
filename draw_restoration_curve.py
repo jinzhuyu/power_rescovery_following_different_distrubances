@@ -24,7 +24,7 @@ import os
 os.chdir('C:\GitHub\Power_grid_resilience')
 
 
-
+#%%
 # select power outage data using state and county
 def select_county_data(outage_data_df, county, state, start_time, end_time):
     '''
@@ -155,6 +155,32 @@ def plot_label(fig_num):
     plt.xticks(fontsize=font_text, fontname='Times New Roman', fontweight='bold')
 
 
+#loc_str = 'Florida: ; Georgia: Camden, Charlton;'
+#loc_dict = extract_county_state(loc_str)
+
+def extract_county_state(loc_str):
+    # replace '.' with ';'
+    loc_str = loc_str.replace('.',';')
+    loc_str_split = re.split(';', loc_str)
+    # remove empty string element in case the string ends with a ";"
+    while("" in loc_str_split): 
+        loc_str_split.remove("") 
+    n_state = len(loc_str_split) 
+    loc_dict={}
+    for ii in np.arange(n_state):
+        loc_str_sub = re.split(':', loc_str_split[ii])
+        state_temp = loc_str_sub[0].strip()    
+        # remove the "." following the last county
+        county_list_temp = loc_str_sub[1:]
+#        if ii==(n_state-1):
+#            county_list_temp[-1] = county_list_temp[-1].replace('.','')
+        # list to string
+        county_str_temp = ', '.join(county_list_temp)
+        county_list_split = county_str_temp.split(',')
+        county_list_split = [x.strip() for x in county_list_split]
+        loc_dict[state_temp] = county_list_split
+    return loc_dict
+
 
 def find_county_affected(outage_data_df, state, select_start_time, select_end_time):
     # case: no counties are input under a state        
@@ -178,22 +204,45 @@ def find_county_affected(outage_data_df, state, select_start_time, select_end_ti
         if (0 < np.min(restore_rate_comb) <= 0.95) & (np.max(outage_count_comb_arr) >= 1000):
             county_affected.append(county)
                 
-    return(county_affected)
-   
+    return county_affected
+
+
+def cal_resil(time_temp_datetime, restore_rate_comb_ave):
+    
+    n_time_point = len(time_temp_datetime)
+    n_restore_rate = len(restore_rate_comb_ave)
+#    if n_time_point == n_restore_rate:
+    
+    duration_sec = (time_temp_datetime[-1] - time_temp_datetime[0]).total_seconds()/3600
+    time_next_datetime = np.delete(time_temp_datetime, 0)
+    time_curr_datetime = np.delete(time_temp_datetime, n_time_point-1)
+    time_diff_sec = (time_next_datetime - time_curr_datetime).total_seconds()/3600
+    
+    restore_rate_comb_ave_arr = restore_rate_comb_ave.array
+    np.delete(restore_rate_comb_ave_arr, 0)
+    restore_rate_next = np.delete(restore_rate_comb_ave_arr, 0)
+    restore_rate_curr = np.delete(restore_rate_comb_ave_arr, n_restore_rate-1)
+    
+    area_under = np.sum(np.dot((restore_rate_curr + restore_rate_next), time_diff_sec))/2
+    resil = area_under/duration_sec
+        
+    return resil
+            
+
  
 def plot_all_county(outage_data_df, loc_dict, select_start_time, select_end_time=None, plot_all = 1):
       
     if select_end_time==None:
         select_end_time = pd.to_datetime(select_start_time) + timedelta(days=45)
-        select_end_time = select_end_time.strftime("%Y-%m-%d %H:%M:%S")      
+        select_end_time = select_end_time.strftime("%Y-%m-%d %H:%M:%S")     
     
     state_list = list(loc_dict.keys())
     
     # to be used in legend
     loc_dict_copy = copy.deepcopy(loc_dict)
     county_list_for_legend = []
-    for jj in np.arange(len(state_list)):
-        state_temp = state_list[jj]
+    for i_state in np.arange(len(state_list)):
+        state_temp = state_list[i_state]
         county_list = loc_dict_copy[state_temp]
         if not county_list[0]:
             county_list = find_county_affected(outage_data_df, state_temp, select_start_time, select_end_time)
@@ -205,9 +254,23 @@ def plot_all_county(outage_data_df, loc_dict, select_start_time, select_end_time
         county_list_for_legend = county_list_for_legend + county_list_with_state            
     county_arr_for_legend = np.asarray(county_list_for_legend)
     
-    
-    counter = 0
+       
+    # df for resilience from the dict: loc_dict_copy
+    resil_df = pd.DataFrame(index=np.arange(len(county_arr_for_legend)), columns = ['state','county','resilience'])
+    resil_df_index = 0
+    for i_state in np.arange(len(state_list)):
+        state_temp = state_list[i_state]
+        county_list = loc_dict_copy[state_temp]
+        for i_county in np.arange(len(county_list)):
+            resil_df['state'].iloc[resil_df_index] = state_temp
+            resil_df['county'].iloc[resil_df_index] = county_list[i_county]
+            resil_df_index += 1
+            
+       
+    resil_df_index = 0
     y_lim_LB = 1
+    colors = iter(cm.rainbow(np.linspace(0, 1, len(county_arr_for_legend))))
+     
     for i_state in np.arange(len(state_list)):
         print(i_state)
         state = state_list[i_state]
@@ -259,8 +322,7 @@ def plot_all_county(outage_data_df, loc_dict, select_start_time, select_end_time
                 # restoration plots on the same figure
                 fig_num = 0
                 fig = plt.figure(fig_num, figsize=(10, 8))                         
-                plt.plot(time_temp_datetime, restore_rate_comb_ave)
-                counter = counter + 1
+                plt.plot(time_temp_datetime, restore_rate_comb_ave, color = next(colors))
 #                plot_label(fig_num)
 
             
@@ -277,7 +339,13 @@ def plot_all_county(outage_data_df, loc_dict, select_start_time, select_end_time
                 plot_all_util(county_outage_data, state, county, popul,select_start_time,
                               index_time, time_temp_datetime, fig_num = ii)
                 plt.show()
-                
+            
+            # calculate resilience, i.e. area under curve, for each county
+            resil_df['resilience'].iloc[resil_df_index] = cal_resil(time_temp_datetime, restore_rate_comb_ave)
+            resil_df_index += 1
+
+
+    # plot all restoration curves in the same figure         
     if plot_all == 1:
         fig_num = 0
         plt.figure(fig_num)
@@ -304,7 +372,22 @@ def plot_all_county(outage_data_df, loc_dict, select_start_time, select_end_time
         save_fig_title = 'Restoration plots/GUI_plots/multi_state_{}_{}.png'.format(state, select_start_time[0:10]) 
         plt.savefig(save_fig_title, dpi=600)
         plt.show()
-          
+    
+    # show the counties afffected in each state
+    for i_state in np.arange(len(state_list)):
+        state = state_list[i_state]
+        county_list = loc_dict_copy[state]
+        print('\n\nCounties affected in {}:\n{}'.format(state, county_list))
+    
+    
+    
+    # bar plot of resilience
+    resil_df_sort = resil_df.sort_values(by=['resilience'], ascending=False)
+    plt.bar(resil_df_sort['county'], resil_df_sort['resilience'])
+    plt.ylim(bottom=min(resil_df_sort['resilience'])-0.01)
+    plt.ylabel('Resilience',  fontweight='bold', fontsize=font_text+2)
+    plt.show()
+    
 #        elif len(county_list) == 1 & (plot_all==0): 
 #            
 #            # extract data for the county
@@ -354,32 +437,6 @@ def plot_all_county(outage_data_df, loc_dict, select_start_time, select_end_time
 #                              select_start_time, index_time, time_temp_datetime, fig_num)
 #                plt.show()
 
-loc_str = 'Florida: ; Georgia: Camden, Charlton;'
-#loc_dict = extract_county_state(loc_str)
-
-def extract_county_state(loc_str):
-    # replace '.' with ';'
-    loc_str = loc_str.replace('.',';')
-    loc_str_split = re.split(';', loc_str)
-    # remove empty string element in case the string ends with a ";"
-    while("" in loc_str_split): 
-        loc_str_split.remove("") 
-    n_state = len(loc_str_split) 
-    loc_dict={}
-    for ii in np.arange(n_state):
-        loc_str_sub = re.split(':', loc_str_split[ii])
-        state_temp = loc_str_sub[0].strip()    
-        # remove the "." following the last county
-        county_list_temp = loc_str_sub[1:]
-#        if ii==(n_state-1):
-#            county_list_temp[-1] = county_list_temp[-1].replace('.','')
-        # list to string
-        county_str_temp = ' '.join(map(str,  county_list_temp))
-        county_list_split = county_str_temp.split(',')
-        county_list_split = [x.strip() for x in county_list_split]
-        loc_dict[state_temp] = county_list_split
-    return loc_dict
-
 
 # function to be executed when the button is clicked           
 def draw_each_cnty():
@@ -392,9 +449,7 @@ def draw_each_cnty():
     select_end_time = txt_end_date.get() 
     plot_all_county(outage_data_sample_df, loc_dict, select_start_time, select_end_time, plot_all = 0)
 
-#loc_str = 'Florida: Seminole, Palm Beach; Georgia: Charlton, Camden'
-#loc_dict = extract_county_state(loc_str)
-    
+   
     
 def draw_all_cnty():
 #    county_list = txt_cnty.get().split(",")
@@ -407,13 +462,10 @@ def draw_all_cnty():
     plot_all_county(outage_data_sample_df, loc_dict, select_start_time, select_end_time, plot_all = 1)
 
 
-# import data
-# set direc
-# import os
-# os.chdir('C:\GitHub\Power grid resilience')
-    
 
+#%%
     
+# load data    
 # county list in a state and fips code
 county_coor_fips_df = pd.read_csv('county fips and coordinates.csv')
 
@@ -432,14 +484,15 @@ county_popul_df = county_popul_df.dropna()
 
 outage_data_sample_df = pd.read_csv('out_data_sample.csv', header=0)
 
+#%%
 
 # define parameters for plot and calculation
-
 win_len = 5 # moveing average window
 x_loc = 0.65
 y_loc = 0.02
-font_text = 12  
-
+font_text = 12
+ 
+#%%
 
 # layout design
 
@@ -481,7 +534,9 @@ txt_end_date = Entry(root, width=wth_txt, textvariable=end_date_str)
 txt_end_date.grid(column=1, row=id_row+2, sticky=(W), padx=(pad_x,0), pady=(0,15))
 
 
-#loc_str = 'Florida; Georgia: Camden, Charlton.'
+#loc_str = 'Florida: Alachua, Broward; Georgia: Camden, Charlton.'
+# loc_str = 'Florida: Broward, Clay, Palm Beach;  Georgia: Charlton;'
+#loc_dict = extract_county_state(loc_str)
 #select_start_time = '2017-09-09'
 #select_end_time = '2017-09-26'
     
@@ -501,7 +556,7 @@ btn_exit.grid(column=1, row=0, sticky=(W), padx=(12,0), pady=(0,0))
 
 root.mainloop()
 
-
+#%%
 
 
 # draw figure
