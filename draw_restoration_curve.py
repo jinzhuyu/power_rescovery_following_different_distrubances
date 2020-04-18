@@ -43,10 +43,10 @@ def select_county_data(outage_data_df, county, state, start_time, end_time):
     num_nan = out_data_county_df['outage_count'].isna().sum()
     
     if (out_data_county_df.empty==True):
-        print('\nData about {} County, {} are missing (data selection stage)'.format(county, state))
+        print('\n{}County, {}: data are missing (data selection stage)'.format(county, state))
         return pd.DataFrame()
     elif num_nan>=round(len_time*0.75,0):
-        print('\nOver 75% of data about {} County, {} are missing (data selection stage)'.format(county, state))
+        print('\{}County, {}: over 75% of data are missing (data selection stage)'.format(county, state))
         return pd.DataFrame()
         
     else:
@@ -195,14 +195,13 @@ def extract_county_state(loc_str):
     return loc_dict
 
 
-def find_county_affected(outage_data_df, state, select_start_time, select_end_time, out_UB = 0.975):
+def check_county_affected(outage_data_df, state, county_list, select_start_time, select_end_time, out_UB = 0.95):
     # case: no counties are input under a state        
-
     county_affected = []
-    county_all_list = county_coor_fips_df.loc[county_coor_fips_df['state']==state, 'county'].tolist()        
+    county_all_list = county_list        
     for ii in np.arange(len(county_all_list)):
         county = county_all_list[ii].strip()
-#        print('\nNow checking if the {}-th county, {} County in {}, is affected'.format(ii, county, state))
+        print('\nChecking if the {}-th, {} County {}, is affected'.format(ii, county, state))
         county_outage_data = select_county_data(
                     outage_data_df, county, state, start_time=select_start_time, end_time=select_end_time)                 
         
@@ -223,10 +222,61 @@ def find_county_affected(outage_data_df, state, select_start_time, select_end_ti
             num_nan = np.isnan(outage_count_comb_arr).sum()
             if 1<= num_nan <= round(len_time*0.75, 0):
                 if np.isnan(outage_count_comb_arr[0]) == True:
-                    print('\nThe first outage count in {} County, State is missing'.format(county, state))
+                    print('\n{} County, {}: the first outage count is missing'.format(county, state))
                     outage_count_comb_arr[0] = 1
                 if np.isnan(outage_count_comb_arr[len_time-1]) == True:
-                    print('\nThe last outage count in {} County, State is missing'.format(county, state))
+                    print('\n{} County, {}: the last outage count is missing'.format(county, state))
+                    outage_count_comb_arr[len_time-1] = 1            
+                outage_count_comb_list = pd.Series(outage_count_comb_arr).interpolate().values.ravel().tolist()
+                outage_count_comb_arr = np.asarray(outage_count_comb_list, dtype = 'float32')
+            
+            restore_rate_comb = (popul-outage_count_comb_arr)/popul
+            
+            if (0 < np.min(restore_rate_comb) <= out_UB) & (np.max(outage_count_comb_arr) >= 500):
+                print('{} County in {} is affected'.format(county, state))
+                county_affected.append(county)
+#            else:
+#                print('{} County in {} is NOT affected'.format(county, state))
+#                print('min rate', np.min(restore_rate_comb))
+#                print('max outage count', np.max(outage_count_comb_arr))
+#            print(county_affected)
+                
+    return county_affected
+
+
+
+def find_county_affected(outage_data_df, state, select_start_time, select_end_time, out_UB = 0.975):
+    # case: no counties are input under a state        
+
+    county_affected = []
+    county_all_list = county_coor_fips_df.loc[county_coor_fips_df['state']==state, 'county'].tolist()        
+    for ii in np.arange(len(county_all_list)):
+        county = county_all_list[ii].strip()
+#        print('\nChecking if the {}-th , {} County, {}, is affected'.format(ii, county, state))
+        county_outage_data = select_county_data(
+                    outage_data_df, county, state, start_time=select_start_time, end_time=select_end_time)                 
+        
+        if county_outage_data.shape[0]==0:
+            continue
+        else:
+            # get time data
+            len_time = len(county_outage_data['run_start_time'])
+            index_time = range(len_time)
+            
+            # calculate restoration rate
+            fips_code =  county_outage_data['fips_code'].unique()[0]
+            popul = int(county_popul_df.loc[county_popul_df['fips_code']==fips_code, 'population'].iloc[0])
+            outage_count_comb = county_outage_data['outage_count'].iloc[index_time]                   
+            outage_count_comb_arr = outage_count_comb.to_numpy(dtype = 'float32')
+            
+            # interplolate when nan values occur
+            num_nan = np.isnan(outage_count_comb_arr).sum()
+            if 1<= num_nan <= round(len_time*0.75, 0):
+                if np.isnan(outage_count_comb_arr[0]) == True:
+                    print('\nThe first outage count in {} County, {} State is missing'.format(county, state))
+                    outage_count_comb_arr[0] = 1
+                if np.isnan(outage_count_comb_arr[len_time-1]) == True:
+                    print('\nThe last outage count in {} County, {} State is missing'.format(county, state))
                     outage_count_comb_arr[len_time-1] = 1            
                 outage_count_comb_list = pd.Series(outage_count_comb_arr).interpolate().values.ravel().tolist()
                 outage_count_comb_arr = np.asarray(outage_count_comb_list, dtype = 'float32')
@@ -278,7 +328,7 @@ def extract_str_from_dict(loc_dict_copy):
         loc_str += county_list[n_county-1] + ';'
     return loc_str
  
-def plot_all_county(outage_data_df, loc_dict, select_start_time, select_end_time=None, plot_all = 1):
+def plot_all_county(outage_data_df, loc_dict, select_start_time, select_end_time=None, plot_all = 1, check_affected=1):
       
     if select_end_time==None:
         select_end_time = pd.to_datetime(select_start_time) + timedelta(days=25)
@@ -293,22 +343,40 @@ def plot_all_county(outage_data_df, loc_dict, select_start_time, select_end_time
         state_temp = state_list[i_state]
         county_list = loc_dict_copy[state_temp]
         find_county_boo = 0
+        check_county_boo = 0
         if len(county_list[0])==0:
             find_county_boo += 1
             county_list = find_county_affected(
-                    outage_data_df, state_temp,select_start_time, select_end_time, out_UB = 0.95)
-            if len(county_list[0])>=1:
+                    outage_data_df, state_temp, select_start_time, select_end_time, out_UB = 0.95)
+            print('counties affected in {} after finding'.format(state_temp), county_list)
+            if county_list:
                 loc_dict_copy[state_temp] = county_list
             else:
                 print('Counties with less than 75% of missing data are not affected.\nOther counites may be affected')
                 continue    # continue to next state
 #        print('\nFinding counties affected finished for State of {}'.format(state_temp))
+        elif check_affected ==1:
+            check_county_boo += 1
+            county_list = check_county_affected(
+                    outage_data_df, state_temp, county_list, select_start_time, select_end_time, out_UB = 0.95)
+            print('county_list after checking in {}'.format(state_temp), county_list)
+            if county_list:    # county_list not empty
+                loc_dict_copy[state_temp] = county_list
+            else:    # county_list is emtpy
+                print('None of the input counties in the State of {} are affected after checking'.format(state_temp))
+                continue
+        else:
+            county_list = loc_dict_copy[state_temp]
+        
         n_county = len(loc_dict_copy[state_temp])
         county_list_with_state = [None]*n_county
         for ii in np.arange(n_county):
             county_list_with_state[ii] = county_list[ii] + ', ' + state_temp       
         county_list_for_legend = county_list_for_legend + county_list_with_state        
     
+    if not county_list_for_legend:
+        print('None of the input counties in input state/states are affected after checking')
+        return
     # save fig title
     loc_json_title = '{}_{}.json'.format(state_list[0], select_start_time[0:10]) 
     loc_dic_json = json.dumps(loc_dict_copy)
@@ -358,7 +426,7 @@ def plot_all_county(outage_data_df, loc_dict, select_start_time, select_end_time
                
           
 #        if len(county_list)>=2:            
-        
+
         for ii in np.arange(len(county_list)):
             
             # extract data for each county
@@ -367,7 +435,8 @@ def plot_all_county(outage_data_df, loc_dict, select_start_time, select_end_time
 #                print('state: ', state)
             county_outage_data = select_county_data(
                     outage_data_df, county, state, start_time=select_start_time, end_time=select_end_time)     
-                
+            
+             
             
             # get time data
             len_time = len(county_outage_data['run_start_time'])  
@@ -385,10 +454,10 @@ def plot_all_county(outage_data_df, loc_dict, select_start_time, select_end_time
             num_nan = np.isnan(outage_count_comb_arr).sum()
             if 1<= num_nan <= round(len_time*0.75, 0):
                 if np.isnan(outage_count_comb_arr[0]) == True:
-                    print('\nThe first outage count in {} County, {} State is missing'.format(county, state))
+                    print('\n{} County, State: the first outage count is missing'.format(county, state))
                     outage_count_comb_arr[0] = 1
                 if np.isnan(outage_count_comb_arr[len_time-1]) == True:
-                    print('\nThe last outage count in {} County, {} State is missing'.format(county, state))
+                    print('\n{} County, {}: the last outage count is missing'.format(county, state))
                     outage_count_comb_arr[len_time-1] = 1                 
                 outage_count_comb_list = pd.Series(outage_count_comb_arr).interpolate().values.ravel().tolist()
                 outage_count_comb_arr = np.asarray(outage_count_comb_list, dtype = 'float32')
@@ -480,18 +549,20 @@ def plot_all_county(outage_data_df, loc_dict, select_start_time, select_end_time
     if n_county_total>=2:
         resil_df_sort = resil_df.sort_values(by=['resilience'], ascending=False)
        
-        if n_county_total<=10:
-            width_bar_plt = 10
+        if n_county_total<=5:
+            width_bar_plt = 6
+        elif 6<=n_county_total<=10:
+            width_bar_plt = 8
         else:
-            width_bar_plt = round(0.5*n_county_total, 0)
-        plt.figure(fig_num, figsize=(width_bar_plt, 8))    
+            width_bar_plt = round(2+0.5*n_county_total, 0)
+        plt.figure(fig_num, figsize=(width_bar_plt, 6))    
         bar_list = plt.bar(resil_df_sort['county'], resil_df_sort['resilience'])
         
         color_arr_sort = cm.rainbow(np.linspace(0, 1, n_county_total))[resil_df_sort.index]
         colors_iter = iter(color_arr_sort)
         for i_bar in np.arange(resil_df_sort.shape[0]):
             bar_list[i_bar].set_color(next(colors_iter))
-        plt.ylim(bottom=min(resil_df_sort['resilience'])-0.01)
+        plt.ylim(bottom=min(resil_df_sort['resilience'])-0.008)
         plt.ylabel('Resilience',  fontweight='bold', fontsize=font_text+2)
         plt.xticks(rotation=45)
         plt.show()
@@ -555,7 +626,8 @@ def draw_each_cnty():
     loc_dict = extract_county_state(loc_str)
     select_start_time = txt_start_date.get()  
     select_end_time = txt_end_date.get() 
-    plot_all_county(outage_data_sample_df, loc_dict, select_start_time, select_end_time, plot_all = 0)
+    plot_all_county(outage_data_sample_df, loc_dict, select_start_time, select_end_time,
+                    plot_all = 0, check_affected=1)
 
    
     
@@ -567,7 +639,8 @@ def draw_all_cnty():
     loc_dict = extract_county_state(loc_str)
     select_start_time = txt_start_date.get()  
     select_end_time = txt_end_date.get() 
-    plot_all_county(outage_data_sample_df, loc_dict, select_start_time, select_end_time, plot_all = 1)
+    plot_all_county(outage_data_sample_df, loc_dict, select_start_time, select_end_time,
+                    plot_all = 1, check_affected=1)
 
 
 
@@ -590,7 +663,7 @@ county_popul_df = county_popul_df.dropna()
 #         ((outage_data_all_df['state']=='Florida') | (outage_data_all_df['state']=='Georgia'))]
 # out_data_sample.to_csv (r'C:\GitHub\Power_grid_resilience\out_data_sample.csv', index = False, header=True)
 
-outage_data_sample_df = pd.read_csv('out_data_sample.csv', header=0)
+#outage_data_sample_df = pd.read_csv('out_data_sample.csv', header=0)
 
 #%%
 
@@ -619,7 +692,7 @@ lbl.grid(column=0, row=0)
 
 lbl = tk.Label(root, text="State and county")
 lbl.grid(column=0, row=id_row, sticky=(W), padx=(pad_x,0))
-loc_str = StringVar(value='Florida; Georgia: Camden, Charlton.')
+loc_str = StringVar(value='Florida: Broward, Clay, Palm Beach; Georgia: Camden, Charlton.')
 txt_loc = Entry(root, width=wth_txt, textvariable=loc_str)
 txt_loc.grid(column=1, row=id_row, sticky=(W), padx=(pad_x,0))
 
@@ -637,7 +710,7 @@ txt_start_date.grid(column=1, row=id_row+1, sticky=(W), padx=(pad_x,0))
 
 lbl = tk.Label(root, text="End date and time")
 lbl.grid(column=0, row=id_row+2, sticky=(W), padx=(pad_x,0), pady=(0,15))
-end_date_str = StringVar(value='2017-09-25 20:00:00')
+end_date_str = StringVar(value='2017-09-20 20:00:00')
 txt_end_date = Entry(root, width=wth_txt, textvariable=end_date_str)
 txt_end_date.grid(column=1, row=id_row+2, sticky=(W), padx=(pad_x,0), pady=(0,15))
 
