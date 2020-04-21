@@ -195,10 +195,15 @@ def extract_county_state(loc_str):
     return loc_dict
 
 
-def check_county_affected(outage_data_df, state, county_list, select_start_time, select_end_time, out_UB = 0.95):
-    # case: no counties are input under a state        
-    county_affected = []
+def check_county_affected(outage_data_df, state, select_start_time, select_end_time, county_list=None, out_UB = 0.95):
+    # county_list=None: no counties are input under a state     
+    
+    if county_list==None:
+        county_list = county_coor_fips_df.loc[county_coor_fips_df['state']==state, 'county'].tolist()
     county_all_list = county_list        
+
+    county_affected = []
+    
     for ii in np.arange(len(county_all_list)):
         county = county_all_list[ii].strip()
         print('\nChecking if the {}-th, {} County {}, is affected'.format(ii, county, state))
@@ -234,57 +239,6 @@ def check_county_affected(outage_data_df, state, county_list, select_start_time,
             
             if (0 < np.min(restore_rate_comb) <= out_UB) & (np.max(outage_count_comb_arr) >= 500):
                 print('{} County in {} is affected'.format(county, state))
-                county_affected.append(county)
-#            else:
-#                print('{} County in {} is NOT affected'.format(county, state))
-#                print('min rate', np.min(restore_rate_comb))
-#                print('max outage count', np.max(outage_count_comb_arr))
-#            print(county_affected)
-                
-    return county_affected
-
-
-
-def find_county_affected(outage_data_df, state, select_start_time, select_end_time, out_UB = 0.975):
-    # case: no counties are input under a state        
-
-    county_affected = []
-    county_all_list = county_coor_fips_df.loc[county_coor_fips_df['state']==state, 'county'].tolist()        
-    for ii in np.arange(len(county_all_list)):
-        county = county_all_list[ii].strip()
-#        print('\nChecking if the {}-th , {} County, {}, is affected'.format(ii, county, state))
-        county_outage_data = select_county_data(
-                    outage_data_df, county, state, start_time=select_start_time, end_time=select_end_time)                 
-        
-        if county_outage_data.shape[0]==0:
-            continue
-        else:
-            # get time data
-            len_time = len(county_outage_data['run_start_time'])
-            index_time = range(len_time)
-            
-            # calculate restoration rate
-            fips_code =  county_outage_data['fips_code'].unique()[0]
-            popul = int(county_popul_df.loc[county_popul_df['fips_code']==fips_code, 'population'].iloc[0])
-            outage_count_comb = county_outage_data['outage_count'].iloc[index_time]                   
-            outage_count_comb_arr = outage_count_comb.to_numpy(dtype = 'float32')
-            
-            # interplolate when nan values occur
-            num_nan = np.isnan(outage_count_comb_arr).sum()
-            if 1<= num_nan <= round(len_time*0.75, 0):
-                if np.isnan(outage_count_comb_arr[0]) == True:
-                    print('\nThe first outage count in {} County, {} State is missing'.format(county, state))
-                    outage_count_comb_arr[0] = 1
-                if np.isnan(outage_count_comb_arr[len_time-1]) == True:
-                    print('\nThe last outage count in {} County, {} State is missing'.format(county, state))
-                    outage_count_comb_arr[len_time-1] = 1            
-                outage_count_comb_list = pd.Series(outage_count_comb_arr).interpolate().values.ravel().tolist()
-                outage_count_comb_arr = np.asarray(outage_count_comb_list, dtype = 'float32')
-            
-            restore_rate_comb = (popul-outage_count_comb_arr)/popul
-            
-            if (0 < np.min(restore_rate_comb) <= out_UB) & (np.max(outage_count_comb_arr) >= 500):
-#                print('{} County in {} is affected'.format(county, state))
                 county_affected.append(county)
 #            else:
 #                print('{} County in {} is NOT affected'.format(county, state))
@@ -346,8 +300,8 @@ def plot_all_county(outage_data_df, loc_dict, select_start_time, select_end_time
         check_county_boo = 0
         if len(county_list[0])==0:
             find_county_boo += 1
-            county_list = find_county_affected(
-                    outage_data_df, state_temp, select_start_time, select_end_time, out_UB = 0.95)
+            county_list = check_county_affected(
+                    outage_data_df, state_temp, select_start_time, select_end_time, county_list = None, out_UB = 0.95)
             print('counties affected in {} after finding'.format(state_temp), county_list)
             if county_list:
                 loc_dict_copy[state_temp] = county_list
@@ -358,7 +312,7 @@ def plot_all_county(outage_data_df, loc_dict, select_start_time, select_end_time
         elif check_affected ==1:
             check_county_boo += 1
             county_list = check_county_affected(
-                    outage_data_df, state_temp, county_list, select_start_time, select_end_time, out_UB = 0.95)
+                    outage_data_df, state_temp, select_start_time, select_end_time, county_list, out_UB = 0.95)
             print('county_list after checking in {}'.format(state_temp), county_list)
             if county_list:    # county_list not empty
                 loc_dict_copy[state_temp] = county_list
@@ -550,12 +504,15 @@ def plot_all_county(outage_data_df, loc_dict, select_start_time, select_end_time
         resil_df_sort = resil_df.sort_values(by=['resilience'], ascending=False)
        
         if n_county_total<=5:
-            width_bar_plt = 6
+            width_bar_plt = 4
+            height_bar_plt = width_bar_plt*3/4
         elif 6<=n_county_total<=10:
-            width_bar_plt = 8
+            width_bar_plt = 6
+            height_bar_plt = width_bar_plt*3/4
         else:
             width_bar_plt = round(2+0.5*n_county_total, 0)
-        plt.figure(fig_num, figsize=(width_bar_plt, 6))    
+            height_bar_plt = 6            
+        plt.figure(fig_num, figsize=(width_bar_plt, height_bar_plt))    
         bar_list = plt.bar(resil_df_sort['county'], resil_df_sort['resilience'])
         
         color_arr_sort = cm.rainbow(np.linspace(0, 1, n_county_total))[resil_df_sort.index]
